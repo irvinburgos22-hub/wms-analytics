@@ -1,0 +1,47 @@
+name: Despliegue en la Nube
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    # ⚠️ Le decimos al robot que entre a tu carpeta escondida
+    defaults:
+      run:
+        working-directory: ./warehouse-excel-analytics
+
+    steps:
+      - name: Clonar código
+        uses: actions/checkout@v4
+      
+      - name: Preparar servidor
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          
+      - name: Instalar sistema
+        run: npm install
+        
+      - name: Compilar y Traducir React
+        run: npm run build
+        
+      - name: Configurar Pages
+        uses: actions/configure-pages@v4
+        
+      - name: Preparar archivos finales
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # ⚠️ Le decimos dónde quedó la carpeta dist
+          path: './warehouse-excel-analytics/dist'
+          
+      - name: Mandar web al aire
+        id: deployment
+        uses: actions/deploy-pages@v4
