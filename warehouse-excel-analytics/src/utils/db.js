@@ -1,72 +1,83 @@
-const DB_NAME = 'ReplAnalyticsDB3';
-const STORE_DATA = 'wms_data';
-const STORE_UXC = 'uxc_mapping';
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, doc, writeBatch, getDocs, setDoc, getDoc } from "firebase/firestore";
 
-export function initDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_DATA)) {
-        db.createObjectStore(STORE_DATA, { keyPath: 'tareaAlmacen' });
-      }
-      if (!db.objectStoreNames.contains(STORE_UXC)) {
-        db.createObjectStore(STORE_UXC, { keyPath: 'producto' });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
+const firebaseConfig = {
+  apiKey: "AIzaSyAPC5Xx0TOrLzI3H0Nd2emBl-QM8r0Muzo",
+  authDomain: "wms-analytics-repl.firebaseapp.com",
+  projectId: "wms-analytics-repl",
+  storageBucket: "wms-analytics-repl.firebasestorage.app",
+  messagingSenderId: "663619218105",
+  appId: "1:663619218105:web:8fbf3dfe8b3bd0eb430968"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
 export async function saveWmsRows(rows) {
-  const db = await initDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_DATA, 'readwrite');
-    const store = tx.objectStore(STORE_DATA);
-    rows.forEach(row => store.put(row)); 
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  const chunks = [];
+  for (let i = 0; i < rows.length; i += 500) {
+    chunks.push(rows.slice(i, i + 500));
+  }
+
+  for (const chunk of chunks) {
+    const batch = writeBatch(db);
+    for (const r of chunk) {
+      const docRef = doc(db, "wms_data", String(r.tareaAlmacen));
+      batch.set(docRef, r, { merge: true });
+    }
+    await batch.commit();
+  }
+  return true;
 }
 
 export async function getAllWmsRows() {
-  const db = await initDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_DATA, 'readonly');
-    const store = tx.objectStore(STORE_DATA);
-    const request = store.getAll();
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+  const querySnapshot = await getDocs(collection(db, "wms_data"));
+  const rows = [];
+  querySnapshot.forEach((doc) => {
+    const data = doc.data();
+    if (data.fechaConf && data.fechaConf.toDate) {
+      data.fechaConf = data.fechaConf.toDate();
+    }
+    rows.push(data);
   });
+  return rows;
 }
 
-export async function saveUxcMapping(mappingObj) {
-  const db = await initDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_UXC, 'readwrite');
-    const store = tx.objectStore(STORE_UXC);
-    Object.keys(mappingObj).forEach(prod => {
-      store.put({ producto: prod, factor: mappingObj[prod] });
-    });
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+export async function saveUxcMapping(mapping) {
+  const docRef = doc(db, "config", "uxc_mapping");
+  await setDoc(docRef, { data: mapping });
+  return true;
 }
 
 export async function getUxcMapping() {
-  const db = await initDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_UXC, 'readonly');
-    const store = tx.objectStore(STORE_UXC);
-    const request = store.getAll();
-    request.onsuccess = () => {
-      const mapping = {};
-      request.result.forEach(item => {
-        mapping[item.producto] = item.factor;
-      });
-      resolve(mapping);
-    };
-    request.onerror = () => reject(request.error);
+  const docRef = doc(db, "config", "uxc_mapping");
+  const docSnap = await getDoc(docRef);
+  if (docSnap.exists()) {
+    return docSnap.data().data || {};
+  }
+  return {};
+}
+
+export async function clearAllWmsData() {
+  const querySnapshot = await getDocs(collection(db, "wms_data"));
+  const chunks = [];
+  let currentChunk = [];
+  
+  querySnapshot.forEach((doc) => {
+    currentChunk.push(doc.ref);
+    if (currentChunk.length === 500) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+    }
   });
+  if (currentChunk.length > 0) chunks.push(currentChunk);
+
+  for (const chunk of chunks) {
+    const batch = writeBatch(db);
+    for (const ref of chunk) {
+      batch.delete(ref);
+    }
+    await batch.commit();
+  }
+  return true;
 }
