@@ -12,6 +12,12 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    
+    # ⚠️ Le decimos al robot que entre a tu carpeta escondida
+    defaults:
+      run:
+        working-directory: ./warehouse-excel-analytics
+
     steps:
       - name: Clonar código
         uses: actions/checkout@v4
@@ -33,7 +39,8 @@ jobs:
       - name: Preparar archivos finales
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './dist'
+          # ⚠️ Le decimos dónde quedó la carpeta dist
+          path: './warehouse-excel-analytics/dist'
           
       - name: Mandar web al aire
         id: deployment
