@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { CalendarDays, CalendarRange, Settings, Database, AlertTriangle, Users, Table as TableIcon, Trash2 } from 'lucide-react';
+import { CalendarDays, CalendarRange, Settings, Database, AlertTriangle, Users, Table as TableIcon, Trash2, Cloud } from 'lucide-react';
 import { processWmsFile, processUxcFile } from './utils/sapProcessor';
-import { saveWmsRows, getAllWmsRows, saveUxcMapping, getUxcMapping, initDB } from './utils/db';
+import { saveWmsRows, getAllWmsRows, saveUxcMapping, getUxcMapping, clearAllWmsData } from './utils/db';
 
-// Importamos nuestras nuevas pestañas modulares
 import DiarioTab from './components/DiarioTab';
 import SemanalTab from './components/SemanalTab';
 import UsuariosTab from './components/UsuariosTab';
@@ -39,7 +38,7 @@ export default function App() {
         totalSaved += result.rows.length;
       }
       setDbRows(await getAllWmsRows());
-      alert(`¡Éxito! Se procesaron correctamente ${totalSaved} tareas.`);
+      alert(`¡Éxito! Se sincronizaron ${totalSaved} tareas a la nube de Google.`);
     } catch (error) {
       alert("Error procesando los archivos: " + error.message);
     }
@@ -63,7 +62,7 @@ export default function App() {
     if (updatedCount > 0) {
       await saveWmsRows(rowsToSave);
       setDbRows(newDbRows);
-      alert(`¡Listo! Se recalcularon las cajas para ${updatedCount} tareas antiguas.`);
+      alert(`¡Listo! Se recalcularon las cajas para ${updatedCount} tareas y se guardó en la nube.`);
     } else {
       alert("Todo está al día. No hay tareas que necesiten recálculo.");
     }
@@ -83,7 +82,7 @@ export default function App() {
       if (dbRows.some(r => r.cajas === 'revisar')) {
         await handleReprocessAllMissing(newMapping);
       } else {
-        alert("¡Base de datos UxC actualizada correctamente!");
+        alert("¡Base de datos UxC sincronizada en la nube correctamente!");
       }
     } catch (error) {
       alert("Error procesando UxC: " + error.message);
@@ -103,22 +102,20 @@ export default function App() {
     
     if (rowsToUpdate.length > 0) await saveWmsRows(rowsToUpdate);
     setDbRows([...dbRows]); 
-    alert(`¡Éxito! Factor actualizado a ${factor} para el código ${producto}.`);
+    alert(`¡Éxito! Factor actualizado a ${factor} para el código ${producto}. Guardado en la nube.`);
   };
 
   const handleClearDB = async () => {
-    if (window.confirm("¿Seguro que quieres borrar todo el historial SAP?")) {
-      const db = await initDB();
-      const tx = db.transaction('wms_data', 'readwrite');
-      tx.objectStore('wms_data').clear();
-      tx.oncomplete = () => {
-        setDbRows([]);
-        alert("¡Historial borrado con éxito!");
-      };
+    if (window.confirm("⚠️ ADVERTENCIA: ¿Seguro que quieres borrar TODO el historial de la NUBE? Esto borrará los datos para todos en la empresa.")) {
+      setLoading(true);
+      await clearAllWmsData();
+      setDbRows([]);
+      setLoading(false);
+      alert("¡Historial borrado con éxito de la nube!");
     }
   };
 
-  if (loading) return <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center text-2xl">Procesando...</div>;
+  if (loading) return <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center text-2xl gap-4"><Cloud className="animate-bounce text-blue-500" size={48} /> Sincronizando con la nube...</div>;
 
   const missingProducts = [...new Set(dbRows.filter(r => r.cajas === 'revisar').map(r => r.producto))];
 
@@ -127,7 +124,9 @@ export default function App() {
       
       {/* MENÚ LATERAL */}
       <div className="w-64 bg-gray-900 p-4 border-r border-gray-800 flex flex-col gap-2">
-        <div className="text-xl font-bold text-blue-400 mb-6 px-2 border-b border-gray-800 pb-4">REPL Analytics</div>
+        <div className="text-xl font-bold text-blue-400 mb-6 px-2 border-b border-gray-800 pb-4 flex items-center gap-2">
+          <Cloud size={24}/> REPL Cloud
+        </div>
         
         <button onClick={() => setActiveTab('diario')} className={`flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${activeTab === 'diario' ? 'bg-blue-600' : 'hover:bg-gray-800'}`}>
           <CalendarDays size={20} /> Vista Diario
@@ -143,7 +142,7 @@ export default function App() {
         </button>
         
         <button onClick={() => setActiveTab('data')} className={`flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${activeTab === 'data' ? 'bg-blue-600' : 'hover:bg-gray-800'}`}>
-          <Database size={20} /> Base de Datos
+          <Database size={20} /> Base de Datos Nube
         </button>
         
         <div className="mt-auto pt-4 border-t border-gray-800 flex flex-col gap-2">
@@ -158,7 +157,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* RENDERIZADO DINÁMICO DE PESTAÑAS */}
       <div className="flex-1 p-8 overflow-y-auto bg-gray-950">
         {activeTab === 'diario' && <DiarioTab dbRows={dbRows} />}
         {activeTab === 'semana' && <SemanalTab dbRows={dbRows} />}
@@ -168,16 +166,18 @@ export default function App() {
         {activeTab === 'data' && (
           <div className="animate-fade-in">
              <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl font-bold">Base de Datos SAP ({dbRows.length})</h1>
+                <h1 className="text-3xl font-bold flex items-center gap-3">
+                  Base de Datos Cloud <span className="text-sm bg-blue-600 px-3 py-1 rounded-full text-white">Sincronizado</span>
+                </h1>
                 <button onClick={handleClearDB} className="flex items-center gap-2 bg-red-900/30 text-red-400 border border-red-800 px-4 py-2 rounded-lg hover:bg-red-900/50 transition-colors">
-                  <Trash2 size={18} /> Limpiar Todo
+                  <Trash2 size={18} /> Limpiar Nube
                 </button>
              </div>
              <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8 relative overflow-hidden group hover:border-blue-500 transition-colors">
               <input type="file" multiple onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" accept=".xlsx, .xls" />
               <div className="text-center group-hover:text-blue-400 transition-colors">
-                <p className="text-xl mb-2">➕ Agregar datos a la historia</p>
-                <p className="text-gray-400">Arrastra aquí uno o múltiples archivos de CONTROL WH</p>
+                <p className="text-xl mb-2">➕ Subir datos a la nube</p>
+                <p className="text-gray-400">Arrastra aquí uno o múltiples archivos de SAP. Estarán disponibles instantáneamente para toda la empresa.</p>
               </div>
             </div>
           </div>
