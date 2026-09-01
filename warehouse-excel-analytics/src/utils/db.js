@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, doc, writeBatch, getDocs, setDoc, getDoc } from "firebase/firestore";
+import { getFirestore, collection, doc, getDocs, setDoc, getDoc, deleteDoc, writeBatch } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAPC5Xx0TOrLzI3H0Nd2emBl-QM8r0Muzo",
@@ -13,71 +13,87 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-export async function saveWmsRows(rows) {
-  const chunks = [];
-  for (let i = 0; i < rows.length; i += 500) {
-    chunks.push(rows.slice(i, i + 500));
+export async function saveWmsRows(newRows) {
+  // 1. Agrupamos las filas nuevas por "Día_Turno" (Ej: 2026-01-28_AM)
+  const rowsByGroup = {};
+  for (const r of newRows) {
+    // Si por alguna razón no tiene fecha o turno, lo mandamos a un grupo "Desconocido"
+    const fecha = r.fechaOpStr || "SinFecha";
+    const turno = r.turno || "SinTurno";
+    const groupId = `${fecha}_${turno}`;
+    
+    if (!rowsByGroup[groupId]) rowsByGroup[groupId] = [];
+    rowsByGroup[groupId].push(r);
   }
-
-  for (const chunk of chunks) {
-    const batch = writeBatch(db);
-    for (const r of chunk) {
-      const docRef = doc(db, "wms_data", String(r.tareaAlmacen));
-      batch.set(docRef, r, { merge: true });
+  
+  // 2. Por cada grupo, descargamos SOLO su historial, fusionamos y volvemos a subir
+  for (const groupId of Object.keys(rowsByGroup)) {
+    const docRef = doc(db, "wms_days", groupId);
+    
+    // Descargamos lo que ya existe solo de ese turno específico
+    const docSnap = await getDoc(docRef);
+    const existingRows = docSnap.exists() && docSnap.data().data 
+      ? JSON.parse(docSnap.data().data) 
+      : [];
+      
+    // Fusionamos para eliminar duplicados si subiste el mismo Excel dos veces
+    const map = new Map();
+    for (const r of existingRows) {
+      map.set(String(r.tareaAlmacen), r);
     }
-    await batch.commit();
+    for (const r of rowsByGroup[groupId]) {
+      map.set(String(r.tareaAlmacen), r);
+    }
+    
+    // Guardamos la partición en la nube
+    await setDoc(docRef, { data: JSON.stringify(Array.from(map.values())) });
   }
+  
   return true;
 }
 
 export async function getAllWmsRows() {
-  const querySnapshot = await getDocs(collection(db, "wms_data"));
-  const rows = [];
+  // Al iniciar la página, traemos todas las particiones
+  const querySnapshot = await getDocs(collection(db, "wms_days"));
+  let rows = [];
   querySnapshot.forEach((doc) => {
-    const data = doc.data();
-    if (data.fechaConf && data.fechaConf.toDate) {
-      data.fechaConf = data.fechaConf.toDate();
+    const chunkData = doc.data().data;
+    if (chunkData) {
+      rows = rows.concat(JSON.parse(chunkData));
     }
-    rows.push(data);
+  });
+  
+  // Restaurar las fechas a formato de JavaScript
+  rows.forEach(r => {
+    if (r.fechaConf) {
+      r.fechaConf = new Date(r.fechaConf);
+    }
   });
   return rows;
 }
 
 export async function saveUxcMapping(mapping) {
   const docRef = doc(db, "config", "uxc_mapping");
-  await setDoc(docRef, { data: mapping });
+  await setDoc(docRef, { data: JSON.stringify(mapping) });
   return true;
 }
 
 export async function getUxcMapping() {
   const docRef = doc(db, "config", "uxc_mapping");
   const docSnap = await getDoc(docRef);
-  if (docSnap.exists()) {
-    return docSnap.data().data || {};
+  if (docSnap.exists() && docSnap.data().data) {
+    return JSON.parse(docSnap.data().data);
   }
   return {};
 }
 
 export async function clearAllWmsData() {
-  const querySnapshot = await getDocs(collection(db, "wms_data"));
-  const chunks = [];
-  let currentChunk = [];
-  
-  querySnapshot.forEach((doc) => {
-    currentChunk.push(doc.ref);
-    if (currentChunk.length === 500) {
-      chunks.push(currentChunk);
-      currentChunk = [];
-    }
+  // Borrar todas las particiones si el usuario presiona "Limpiar Nube"
+  const querySnapshot = await getDocs(collection(db, "wms_days"));
+  const batch = writeBatch(db);
+  querySnapshot.forEach((document) => {
+    batch.delete(document.ref);
   });
-  if (currentChunk.length > 0) chunks.push(currentChunk);
-
-  for (const chunk of chunks) {
-    const batch = writeBatch(db);
-    for (const ref of chunk) {
-      batch.delete(ref);
-    }
-    await batch.commit();
-  }
+  await batch.commit();
   return true;
 }
